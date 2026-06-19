@@ -1,221 +1,85 @@
-# W10 - Progressive Delivery with Analysis
+# Báo cáo kết quả Lab & Challenge W10 - Security & Hardening Platform
 
-GitOps setup for API deployment với Argo Rollouts + AnalysisTemplate.
+## Phần trả lời câu hỏi lý thuyết (Slide W10)
 
-## Concept
+### 1. Vì sao các guardrail cũ tự động áp dụng cho namespace/team mới (Team B - payments) mà không cần viết luật mới?
+* **Cấp độ hoạt động (Scope):** Các chính sách của OPA Gatekeeper (Constraints) và Sigstore Policy Controller (ClusterImagePolicy) được định nghĩa ở cấp độ **Cluster (Cluster-scoped)**. 
+* **Cơ chế khớp luật (Matching rules):** Khi định nghĩa Constraint, ta chỉ định loại tài nguyên cần kiểm tra (ví dụ: mọi `Deployment`, `Pod` trong cụm) chứ không giới hạn theo namespace cụ thể. Do đó, khi một namespace mới như `payments` được tạo ra, bất kỳ yêu cầu tạo Pod/Deployment nào gửi tới Kubernetes API Server đều phải đi qua Admission Webhook của Gatekeeper và Sigstore. Nhờ vậy, các guardrail bảo mật (chặn tag `:latest`, bắt buộc `limits`, chặn `runAsUser: 0`, xác thực chữ ký image) tự động được thực thi trên namespace mới mà không cần nhân bản hay cấu hình lại.
 
-Deploy API với **canary strategy** và **automated analysis**:
-- Rollout: 10% → 50% → 100%
-- AnalysisTemplate query Prometheus để check success rate ≥ 95%
-- Auto rollback nếu analysis fail
-- AlertManager gửi email khi có SLO violation
+### 2. Sự khác biệt giữa Role/RoleBinding và ClusterRoleBinding trong việc giữ cô lập (Multi-tenancy)?
+* **Role / RoleBinding (Namespace-scoped):** Định nghĩa và liên kết quyền **chỉ có hiệu lực bên trong một Namespace cụ thể**. Khi gán quyền cho `payments-developer` bằng RoleBinding trong namespace `payments`, tài khoản này hoàn toàn không thể xem hoặc can thiệp sang namespace `demo` hay `kube-system`. Đây là chìa khóa để triển khai Multi-tenancy an toàn.
+* **ClusterRoleBinding (Cluster-scoped):** Liên kết một Role/ClusterRole với đối tượng trên phạm vi **toàn bộ Cluster**. Nếu ta dùng ClusterRoleBinding cho `payments-developer`, họ sẽ có quyền thao tác trên toàn bộ namespaces của cụm (bao gồm cả `demo` và `kube-system`), phá vỡ hoàn toàn ranh giới cô lập giữa các team.
 
-## Requirements
+---
 
-- Docker Desktop
-- kubectl
-- minikube
-- git
+## Phần 1: Chứng minh Lab 1 - RBAC & Admission Policy (Gatekeeper)
 
-## Structure
+### 1.1. Phân quyền Role-Based Access Control (RBAC)
+Hệ thống phân quyền chi tiết cho 3 đối tượng `alice` (Developer), `bob` (SRE), và `carol` (Viewer) đã được sync qua GitOps thành công.
+*   **Alice** (Developer ns `demo`): Có quyền CRUD workload trong namespace `demo`, không thể đụng vào namespace khác.
+    ![Chứng minh quyền của Alice](./evidence/lab1_rbac_alice.png)
+*   **Bob** (SRE toàn cụm): Được xem và thao tác trên Pod ở mọi namespace.
+    ![Chứng minh quyền của Bob](./evidence/lab1_rbac_bob.png)
+*   **Carol** (Viewer toàn cụm): Chỉ có quyền đọc (Read-only), không được phép chỉnh sửa hay xóa.
+    ![Chứng minh quyền của Carol](./evidence/lab1_rbac_carol.png)
 
-```
-w10/
-├── app-api/              # API Rollout manifests
-│   ├── rollout.yaml      # Argo Rollout với canary strategy
-│   ├── service.yaml      # Service expose API
-│   └── servicemonitor.yaml # Prometheus metrics scraper
-├── app-analysis/         # Analysis manifests
-│   └── analysis-template.yaml # Template phân tích success rate
-├── app-alert/            # Alert manifests
-│   ├── prometheus-rules.yaml # PrometheusRule cho SLO alerts
-│   ├── email-secret.yaml # Gmail password (NOT COMMITTED)
-│   └── README.md         # Alert setup guide
-├── app-common/           # Common resources
-│   └── demo-namespace.yaml # Namespace demo
-├── src/                  # Source code
-│   └── api/              # Flask API application
-├── argocd/
-│   ├── apps/             # ArgoCD Application manifests
-│   │   ├── app-api.yaml  # Deploy API Rollout
-│   │   ├── app-analysis.yaml # Deploy AnalysisTemplate
-│   │   ├── app-alert.yaml # Deploy PrometheusRule
-│   │   ├── app-common.yaml # Deploy common resources
-│   │   ├── k8s-prometheus.yaml # Prometheus + AlertManager
-│   │   └── k8s-rollout.yaml # Argo Rollouts controller
-│   └── root.yaml         # App of Apps pattern
-└── README.md
-```
+### 1.2. Gatekeeper Constraints - Chặn manifest vi phạm
+4 chính sách bảo mật bắt buộc đã hoạt động chính xác tại Admission Control:
+*   **Cấm image tag `:latest`**: Tránh deploy các phiên bản không xác định.
+    ![Chặn image tag latest](./evidence/lab1_gatekeeper_latest.png)
+*   **Bắt buộc có resource limits**: Tránh Pod chiếm dụng hết tài nguyên của Node.
+    ![Chặn thiếu resource limits](./evidence/lab1_gatekeeper_limits.png)
+*   **Cấm chạy container bằng quyền root (`runAsUser: 0`)**: Hạn chế leo thang đặc quyền.
+    ![Chặn container chạy root](./evidence/lab1_gatekeeper_root.png)
+*   **Cấm sử dụng `hostNetwork: true`**: Tránh container can thiệp trực tiếp vào mạng vật lý của Node.
+    ![Chặn sử dụng hostNetwork](./evidence/lab1_gatekeeper_hostnetwork.png)
 
-## Quick Start
+### 1.3. Custom ConstraintTemplate (Bắt buộc)
+Đã tự định nghĩa chính sách bắt buộc mọi Deployment/Pod phải có nhãn `owner` để phục vụ audit/chargeback:
+![Áp dụng thành công Custom ConstraintTemplate](./evidence/lab1_custom_constraint.png)
 
-### 1. Setup Cluster
-```bash
-minikube start -p w10 --driver=docker
-kubectl config use-context w10
-```
+---
 
-### 2. Install ArgoCD
-```bash
-kubectl create ns argocd
-kubectl apply --server-side -n argocd \
-  -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-kubectl -n argocd rollout status deploy/argocd-server
-```
+## Phần 2: Chứng minh Lab 2 - Secrets & Supply Chain Hardening
 
-### 3. Access ArgoCD UI
-```bash
-# Port forward
-kubectl -n argocd port-forward svc/argocd-server 8080:443 &
+### 2.1. Quản lý Secret tự động với External Secrets Operator (ESO)
+Mật khẩu cơ sở dữ liệu được quản lý tập trung trên AWS Secrets Manager và đồng bộ tự động về cụm.
+*   **Thời gian đồng bộ (Refresh Interval) < 60s**: Đổi mật khẩu trên AWS, K8s Secret tự động cập nhật giá trị mới.
+    ![Đồng bộ Secret thành công dưới 60s](./evidence/lab2_eso_sync.png)
+*   **Không cần restart Pod (Zero-Downtime)**: Nhờ mount Secret dưới dạng volume, Pod tự động đọc được file mật khẩu mới mà không cần khởi động lại Pod.
+    ![AGE của Pod không đổi sau khi xoay vòng key](./evidence/lab2_eso_no_restart.png)
 
-# Get password
-kubectl -n argocd get secret argocd-initial-admin-secret \
-  -o jsonpath='{.data.password}' | base64 -d; echo
-```
+### 2.2. Kiểm tra lỗ hổng bảo mật (Trivy Scan trong CI)
+Mọi Pull Request/Push lên nhánh chính đều kích hoạt bước quét mã nguồn và ảnh container bằng Trivy. Nếu phát hiện lỗ hổng `HIGH` hoặc `CRITICAL`, pipeline sẽ tự động báo đỏ và chặn merge.
+![CI Pipeline bị block do phát hiện CVE nguy hiểm](./evidence/lab2_trivy_ci.png)
 
-### STEP PHẢI LÀM ĐỂ APP API CHẠY ĐƯỢC
-Step 1: Phải build image:
-- Dùng Github Action tại `.github/workflows/build-push.yml` để build image.
-- Hoặc build local và đẩy lên k8s
+### 2.3. Ký số & Xác thực ảnh container (Cosign + Sigstore)
+*   **CI ký số ảnh**: Ảnh container sau khi scan sạch sẽ được ký bằng khóa riêng tư của Cosign.
+*   **Verify tại Admission Control**: Sigstore Policy Controller chỉ cho phép deploy các ảnh có chữ ký hợp lệ.
+*   **Deploy ảnh chưa ký**: Bị admission webhook reject lập tức.
+    ![Admission chặn deploy ảnh chưa ký](./evidence/lab2_cosign_reject.png)
+*   **Deploy ảnh đã ký**: Khớp chính sách và chạy thành công.
+    ![Deploy ảnh đã ký thành công](./evidence/lab2_cosign_pass.png)
 
-Step 2: Phải đổi image name dòng `24` trong file `app-api/rollout.yaml` thành image các bạn đã build
+---
 
-> Note 1: Fork repo thì sẽ không active được Github Action
+## Phần 3: Chứng minh Challenge 24h - Onboard Team Payments & Cô lập Tenant
 
-> Note 2: Nên clone repo template này về sau đó đẩy lên 1 repo của các bạn
+### 3.1. Phân quyền Least-Privilege cho Developer Team Payments
+Tài khoản `payments-dev` được giới hạn nghiêm ngặt chỉ quản lý workload trong namespace `payments`:
+*   Cho phép CRUD workloads (deployment, pod, service, rollout) trong `payments`.
+*   Chặn hoàn toàn hành vi can thiệp sang namespace `demo` hoặc đọc secrets/sửa quyền.
+![Kiểm tra can-i của payments-dev](./evidence/challenge_rbac_dev.png)
 
-> Note 3: Phải đổi đúng image mà các bạn đã build nhé
+### 3.2. Kiểm soát ngân sách tài nguyên (ResourceQuota & LimitRange)
+*   **ResourceQuota**: Ngăn chặn tình trạng team `payments` deploy vượt quá giới hạn tổng của namespace.
+    ![ResourceQuota từ chối yêu cầu vượt quota](./evidence/challenge_quota_deny.png)
+*   **LimitRange**: Tự động điền các thông số CPU/Memory mặc định cho các Pod không khai báo tài nguyên, giúp vượt qua Gatekeeper thành công.
+    ![Pod tự động được tiêm resources bởi LimitRange](./evidence/challenge_limitrange_inject.png)
 
-### 4. Deploy App of Apps
-```bash
-kubectl apply -f argocd/root.yaml
-```
-
-### 5. Setup Email Alert
-```bash
-# Follow instructions in app-alert/README.md
-cp app-alert/email-secret.yaml.example app-alert/email-secret.yaml
-kubectl apply -f app-alert/email-secret.yaml
-```
-
-## Components
-
-### Core
-- **Argo Rollouts**: Progressive delivery controller
-- **Prometheus Stack**: Metrics collection + AlertManager
-- **API**: Flask application với metrics endpoint
-
-### GitOps Applications
-- `app-api`: API Rollout với canary strategy
-- `app-analysis`: AnalysisTemplate cho automated validation
-- `app-alert`: PrometheusRule cho runtime alerting
-- `app-common`: Shared resources (namespace)
-- `k8s-prometheus`: Monitoring stack
-- `k8s-rollout`: Argo Rollouts controller
-
-## Verify Deployment
-
-### Check Rollout Status
-```bash
-# Watch rollout progress
-kubectl get rollout api -n demo -w
-
-# Check current state
-kubectl get rollout api -n demo
-
-# Check pods
-kubectl get pods -n demo -l app=api
-```
-
-### Check AnalysisRun
-```bash
-# List analysis runs
-kubectl get analysisrun -n demo
-
-# Watch latest analysis
-kubectl get analysisrun -n demo --sort-by=.metadata.creationTimestamp | tail -1
-
-# Describe for detailed metrics
-kubectl describe analysisrun -n demo <name>
-```
-
-### Query Prometheus Metrics
-```bash
-# Success rate metric
-kubectl run test-query --image=curlimages/curl:latest --rm -i --restart=Never -n monitoring -- \
-  curl -s 'http://kube-prometheus-stack-prometheus.monitoring.svc:9090/api/v1/query?query=api:success_rate:5m'
-```
-
-## Test Scenarios (GitOps)
-
-### Test 1: Successful Deployment (Success Rate ≥ 90%)
-```bash
-# Edit rollout to deploy with no errors
-nano app-api/rollout.yaml
-# Set: ERROR_RATE: "0"
-
-git add app-api/rollout.yaml
-git commit -m "test: deploy with 0% error rate"
-git push origin main
-
-# Watch AnalysisRun succeed
-kubectl get analysisrun -n demo -w
-```
-
-### Test 2: Failed Deployment (Success Rate < 90%)
-```bash
-# Edit rollout to deploy with 15% error rate
-nano app-api/rollout.yaml
-# Set: ERROR_RATE: "0.15"
-
-git add app-api/rollout.yaml
-git commit -m "test: deploy with 15% error rate (should fail)"
-git push origin main
-
-# Watch AnalysisRun fail and auto rollback
-kubectl get analysisrun -n demo -w
-kubectl get rollout api -n demo
-```
-
-### Test 3: Trigger SLO Alert Email
-```bash
-# Edit rollout to set 10% error rate (triggers alert, but passes canary)
-nano app-api/rollout.yaml
-# Set: ERROR_RATE: "0.10"
-
-git add app-api/rollout.yaml
-git commit -m "test: deploy with 10% error rate (90% success)"
-git push origin main
-
-# Canary passes (≥90%) but SLO alert fires (below 95%)
-# Wait 2-3 minutes, then check email inbox
-```
-
-
-## Configuration Reference
-
-### Sync Waves
-ArgoCD applications deploy in order:
-- Wave -1: `app-common` (namespace)
-- Wave 0: `k8s-prometheus`, `k8s-rollout` (infrastructure)
-- Wave 1: `app-analysis`, `app-alert` (configuration)
-- Wave 2: `app-api` (application)
-
-## Cleanup
-
-```bash
-# Delete ArgoCD applications
-kubectl delete -f argocd/root.yaml
-
-# Wait for resources to be cleaned up
-kubectl get all -n demo
-kubectl get all -n monitoring
-
-# Delete ArgoCD
-kubectl delete ns argocd
-
-# Stop minikube
-minikube stop -p w10
-minikube delete -p w10
-```
-
+### 3.3. Tường lửa mạng cô lập Tenant (NetworkPolicy)
+Áp dụng chính sách mạng chặn tuyệt đối luồng giao tiếp giữa 2 tenant:
+*   **Chặn kết nối chéo**: Pod từ namespace `payments` cố gắng kết nối tới service `api` ở namespace `demo` sẽ bị Timeout hoàn toàn.
+    ![Thử nghiệm kết nối bị chặn và Timeout](./evidence/challenge_networkpolicy_timeout.png)
+*   **Phân giải DNS và truy cập bên ngoài**: Pod vẫn có thể phân giải tên miền nội bộ và truy cập internet bình thường.
+    ![Phân giải DNS và truy cập Google thành công](./evidence/challenge_networkpolicy_external.png)
