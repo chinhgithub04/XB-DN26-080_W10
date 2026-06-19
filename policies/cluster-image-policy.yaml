@@ -1,0 +1,14 @@
+apiVersion: policy.sigstore.dev/v1beta1
+kind: ClusterImagePolicy
+metadata:
+  name: require-cosign-keypair
+spec:
+  images:
+    - glob: "ghcr.io/chinhgithub04/w10-api**"
+  authorities:
+    - key:
+        data: |
+          -----BEGIN PUBLIC KEY-----
+          MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAELOb1NKYuAeUD2CXYGmV4PLwCjodJ
+          nZvNpMXnJNkPjRAtWL4/zkPD8D930GsWqHh+9aX/ZDjBMB7EhkQGfoIxDg==
+          -----END PUBLIC KEY-----
