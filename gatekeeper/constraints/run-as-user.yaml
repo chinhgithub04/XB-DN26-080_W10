@@ -13,3 +13,4 @@ spec:
       - gatekeeper-system
       - argocd
       - monitoring
+      - external-secrets

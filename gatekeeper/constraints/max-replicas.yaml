@@ -13,5 +13,6 @@ spec:
       - gatekeeper-system
       - argocd
       - monitoring
+      - external-secrets
   parameters:
     maxReplicas: 5
