@@ -10,3 +10,4 @@ k8s-monitoring/alertmanager-config.yaml
 
 # OS
 .DS_Store
+kubectl-argo-rollouts.exe
