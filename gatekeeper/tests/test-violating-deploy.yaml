@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-violating-deploy
+  namespace: demo
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: test-violating-deploy
+  template:
+    metadata:
+      labels:
+        app: test-violating-deploy
+    spec:
+      containers:
+      - name: web
+        image: nginx:1.25.1
+        resources:
+          limits:
+            cpu: 100m
+            memory: 64Mi

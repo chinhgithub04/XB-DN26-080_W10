@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-valid-deploy
+  namespace: demo
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: test-valid-deploy
+  template:
+    metadata:
+      labels:
+        app: test-valid-deploy
+    spec:
+      containers:
+      - name: web
+        image: nginx:1.25.1
+        resources:
+          limits:
+            cpu: 100m
+            memory: 64Mi
