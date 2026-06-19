@@ -3,8 +3,13 @@ kind: K8sPSPRunAsUser
 metadata:
   name: enforce-run-as-user
 spec:
-  enforcementAction: warn
+  enforcementAction: deny
   match:
     kinds:
       - apiGroups: [""]
         kinds: ["Pod"]
+    excludedNamespaces:
+      - kube-system
+      - gatekeeper-system
+      - argocd
+      - monitoring

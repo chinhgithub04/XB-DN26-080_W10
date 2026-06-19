@@ -3,8 +3,13 @@ kind: K8sDisallowedTags
 metadata:
   name: disallow-latest-tags
 spec:
-  enforcementAction: warn
+  enforcementAction: deny
   match:
     kinds:
       - apiGroups: [""]
         kinds: ["Pod"]
+    excludedNamespaces:
+      - kube-system
+      - gatekeeper-system
+      - argocd
+      - monitoring
