@@ -9,6 +9,16 @@ PrometheusMetrics(app)  # Tự thêm /metrics
 
 ERROR_RATE = float(os.getenv("ERROR_RATE", "0"))
 VERSION = os.getenv("VERSION", "v1")
+SECRET_PATH = "/etc/secrets/db-password/password"
+
+@app.get("/secret")
+def secret():
+    if os.path.exists(SECRET_PATH):
+        with open(SECRET_PATH, "r") as f:
+            pwd = f.read().strip()
+        return jsonify(password=pwd)
+    return jsonify(error="secret file not found"), 404
+
 
 @app.get("/")
 def index():
