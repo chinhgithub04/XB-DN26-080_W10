@@ -1,0 +1,24 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8spsprunasuser
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sPSPRunAsUser
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8spsprunasuser
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          container.securityContext.runAsUser == 0
+          msg := sprintf("Container '%v' is explicitly configured to run as root (runAsUser: 0).", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          input.review.object.spec.securityContext.runAsUser == 0
+          msg := "Pod securityContext is explicitly configured to run as root (runAsUser: 0)."
+        }

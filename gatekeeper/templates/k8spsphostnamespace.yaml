@@ -1,0 +1,18 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8spsphostnamespace
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sPSPHostNamespace
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8spsphostnamespace
+
+        violation[{"msg": msg}] {
+          input.review.object.spec.hostNetwork == true
+          msg := "Sharing the host network namespace (hostNetwork: true) is not allowed."
+        }
