@@ -21,4 +21,3 @@ spec:
         command: ["python", "-m", "http.server", "8080"]
         ports:
         - containerPort: 8080
-        # Intentionally omitted resources to verify LimitRange auto-injection
