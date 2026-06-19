@@ -5,3 +5,5 @@ metadata:
   name: demo
   annotations:
     argocd.argoproj.io/sync-wave: "0"
+  labels:
+    policy.sigstore.dev/include: "true"
